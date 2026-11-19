@@ -26,7 +26,18 @@ Get-AppxPackage *AppleInc*  # Store version  => "AppleInc.iTunes"
   until you install classic iTunes. The Store app keeps the driver private to
   itself; other tools can't use it.
 
-### To switch to the classic driver
+### Fastest: install just the driver via winget (no full iTunes needed)
+The driver ships as its own winget package — you don't need classic iTunes at all:
+```powershell
+winget install --id Apple.AppleMobileDeviceSupport -e
+```
+Then start its service (needs an **elevated**/admin shell) or just reboot:
+```powershell
+Start-Service "Apple Mobile Device Service"
+```
+`setup-usb.ps1` in the project root does both of these for you (run it as admin).
+
+### Alternative: classic iTunes
 1. Optional: uninstall the Store "iTunes"/"Apple Devices" app.
 2. Download classic **iTunes64Setup.exe** from Apple's support downloads
    (the standalone installer, not the Store listing).
