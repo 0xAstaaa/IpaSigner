@@ -93,6 +93,14 @@
       <input type="password" name="password" placeholder="password for the .p12">
       <div class="hint">Leave blank if your .p12 has no password.</div>
 
+      {% if usb_ok %}
+      <label style="display:flex;align-items:center;gap:8px;margin-top:16px;cursor:pointer">
+        <input type="checkbox" id="wantOta" style="width:auto;margin:0">
+        <span>Also create QR / over-the-air install link</span>
+      </label>
+      <div class="hint">Off = USB only (faster, no tunnel). Turn on if you also want to install wirelessly.</div>
+      {% endif %}
+
       <button type="submit" id="go">Sign App</button>
     </form>
   </div>
@@ -135,6 +143,9 @@ f.addEventListener('submit', async (e)=>{
   setStatus('info', '<span class="spin"></span>Uploading & signing… this can take a minute for big apps.');
 
   const data = new FormData(f);
+  // USB-only sign skips the tunnel unless the OTA box is checked
+  const otaBox = document.getElementById('wantOta');
+  data.set('want_ota', (otaBox && otaBox.checked) ? '1' : '0');
   try{
     const r = await fetch('/sign', {method:'POST', body:data});
     const j = await r.json();
@@ -171,19 +182,27 @@ f.addEventListener('submit', async (e)=>{
     }
 
     const install = document.getElementById('install');
+    const otaBlock = document.getElementById('otaBlock');
+    const usbReady = j.usb_available && j.usb_devices && j.usb_devices.length;
     if(j.install_url){
+      otaBlock.style.display='block';
       install.href = j.install_url;
       install.style.display='block';
       new QRious({element:document.getElementById('qr'), value:j.install_url, size:200});
       document.getElementById('qr').style.display='block';
       setStatus('ok', '✅ Signed. On your iPhone, scan the QR or tap the button, then confirm the install.');
+    }else if(usbReady){
+      // USB-only sign: no OTA block at all, USB button already shown above
+      otaBlock.style.display='none';
+      setStatus('ok', '✅ Signed. Tap "Install via USB" to put it on your iPhone.');
     }else{
-      // no tunnel: just offer the file
+      // no tunnel and no USB device: just offer the file
+      otaBlock.style.display='block';
       install.textContent = '⬇ Download signed IPA';
       install.href = j.ipa_url;
       install.style.display='block';
       document.getElementById('qr').style.display='none';
-      setStatus('warn', '✅ Signed, but no install link (cloudflared missing). Download the IPA and sideload with AltStore/Sideloadly.');
+      setStatus('warn', '✅ Signed, but no install path available. Download the IPA and sideload, or enable the OTA link / connect a device.');
     }
     if(j.log) showLog(j.log);
   }catch(err){

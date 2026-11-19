@@ -163,7 +163,7 @@ def run_zsign(ipa_path, p12_path, prov_path, password, out_path):
         "-p", password,          # p12 password
         "-m", prov_path,         # .mobileprovision
         "-o", out_path,          # output ipa
-        "-z", "9",               # max compression
+        "-z", "1",               # fast compression (9 = tiny but very slow)
         ipa_path,                # input ipa
     ]
     try:
@@ -302,9 +302,11 @@ def sign():
     version   = signed_meta.get("version") or meta.get("version")
     title     = signed_meta.get("name") or meta.get("name") or "App"
 
-    # start tunnel (needed for OTA install on device)
+    # Only spin up the tunnel + OTA manifest if the user wants the QR/link
+    # path. For USB install it's unnecessary (and slow to start), so skip it.
+    want_ota = request.form.get("want_ota", "1") != "0"
     port = request.environ.get("SERVER_PORT", "5000")
-    public = start_tunnel(port)
+    public = start_tunnel(port) if want_ota else None
 
     if public:
         ipa_url = f"{public}/signed/{out_name}"
@@ -373,4 +375,25 @@ if __name__ == "__main__":
     else:
         print("  [i] USB install off - ideviceinstaller not in ./bin")
         print("      (needs classic iTunes' Apple Mobile Device driver)")
-    app.run(host="0.0.0.0", port=port, threaded=True)
+    print("  >> For BIG apps, upload via http://127.0.0.1:5000 (local),")
+    print("     NOT the tunnel URL - the tunnel is only for installing on")
+    print("     the phone. Local upload of a 500MB IPA is near-instant.")
+    print("=" * 60)
+
+    # Production server (waitress) - handles large uploads without the
+    # Flask dev-server timeouts. Falls back to Flask's server if missing.
+    try:
+        from waitress import serve
+        serve(
+            app,
+            host="0.0.0.0",
+            port=port,
+            threads=8,
+            # allow very large uploads and slow clients
+            max_request_body_size=6 * 1024 * 1024 * 1024,  # 6 GB
+            channel_timeout=1800,                           # 30 min
+            cleanup_interval=60,
+        )
+    except ImportError:
+        print("  [i] waitress not installed - using Flask dev server")
+        app.run(host="0.0.0.0", port=port, threaded=True)
