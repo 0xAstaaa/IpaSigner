@@ -44,11 +44,68 @@ def _exe(name):
     found = shutil.which(name)
     return found or (win if os.name == "nt" else nix)
 
-ZSIGN       = _exe("zsign")
-CLOUDFLARED = _exe("cloudflared")
+ZSIGN            = _exe("zsign")
+CLOUDFLARED      = _exe("cloudflared")
+IDEVICEINSTALLER = _exe("ideviceinstaller")
+IDEVICE_ID       = _exe("idevice_id")
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 4 * 1024 * 1024 * 1024  # 4 GB
+
+
+# ---------------------------------------------------------------- USB install
+def _have(path):
+    return bool(path and (os.path.exists(path) or shutil.which(os.path.basename(path))))
+
+
+def usb_available():
+    """Is the native USB-install toolchain present?"""
+    return _have(IDEVICEINSTALLER)
+
+
+def list_usb_devices():
+    """Return a list of connected iPhone UDIDs via idevice_id, or []."""
+    tool = IDEVICE_ID if _have(IDEVICE_ID) else None
+    if not tool:
+        return []
+    try:
+        proc = subprocess.run([tool, "-l"], capture_output=True, text=True, timeout=15)
+    except Exception:
+        return []
+    udids = [ln.strip() for ln in (proc.stdout or "").splitlines() if ln.strip()]
+    return udids
+
+
+def usb_install(ipa_path, udid=None):
+    """Install a signed IPA onto a USB-connected device.
+    Returns (ok: bool, log: str)."""
+    if not usb_available():
+        return False, (
+            "ideviceinstaller not found. USB install needs libimobiledevice "
+            "(ideviceinstaller.exe + idevice_id.exe) in ./bin AND the Apple "
+            "Mobile Device driver (classic iTunes, not the Microsoft Store "
+            "version). See README-usb.md."
+        )
+    devices = list_usb_devices()
+    if not devices:
+        return False, (
+            "No iPhone detected over USB. Check: cable connected, phone "
+            "unlocked, 'Trust This Computer' tapped, and the Apple Mobile "
+            "Device driver installed (classic iTunes). "
+            "If iTunes sees the phone but this doesn't, you likely have the "
+            "Microsoft Store iTunes, which does not expose the shared driver."
+        )
+    target = udid or devices[0]
+    cmd = [IDEVICEINSTALLER, "-u", target, "-i", ipa_path]
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=900)
+    except subprocess.TimeoutExpired:
+        return False, "ideviceinstaller timed out."
+    log = (proc.stdout or "") + "\n" + (proc.stderr or "")
+    ok = proc.returncode == 0 and (
+        "Complete" in log or "Installing" in log or "- 100%" in log
+    )
+    return ok, log
 
 # ---------------------------------------------------------------- tunnel state
 _tunnel = {"url": None, "proc": None}
@@ -174,7 +231,33 @@ def index():
         "index.html",
         zsign_ok=bool(os.path.exists(ZSIGN) or shutil.which("zsign")),
         cf_ok=bool(os.path.exists(CLOUDFLARED) or shutil.which("cloudflared")),
+        usb_ok=usb_available(),
     )
+
+
+@app.route("/devices")
+def devices():
+    """List connected iPhones (for the USB-install UI)."""
+    return jsonify(
+        usb_available=usb_available(),
+        devices=list_usb_devices(),
+    )
+
+
+@app.route("/install_usb", methods=["POST"])
+def install_usb():
+    """Install an already-signed IPA (by filename in signed/) over USB."""
+    name = request.form.get("name", "")
+    udid = request.form.get("udid") or None
+    # guard against path traversal
+    safe = os.path.basename(name)
+    ipa_path = os.path.join(SIGNED_DIR, safe)
+    if not safe or not os.path.exists(ipa_path):
+        return jsonify(ok=False, error="Signed IPA not found."), 404
+    ok, log = usb_install(ipa_path, udid)
+    if not ok:
+        return jsonify(ok=False, error="USB install failed.", log=log), 500
+    return jsonify(ok=True, log=log)
 
 
 @app.route("/sign", methods=["POST"])
@@ -243,6 +326,9 @@ def sign():
         ipa_url=ipa_url,
         install_url=install_url,
         tunnel=bool(public),
+        signed_name=out_name,          # for USB install
+        usb_available=usb_available(),
+        usb_devices=list_usb_devices(),
         log=log,
     )
 
@@ -281,4 +367,10 @@ if __name__ == "__main__":
     if not (os.path.exists(CLOUDFLARED) or shutil.which("cloudflared")):
         print("  [!] cloudflared not found - OTA install link disabled")
         print("      (signing still works; you'll get the IPA file)")
+    if usb_available():
+        devs = list_usb_devices()
+        print(f"  [+] USB install ready - {len(devs)} device(s) connected")
+    else:
+        print("  [i] USB install off - ideviceinstaller not in ./bin")
+        print("      (needs classic iTunes' Apple Mobile Device driver)")
     app.run(host="0.0.0.0", port=port, threaded=True)

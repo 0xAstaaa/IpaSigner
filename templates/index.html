@@ -42,6 +42,13 @@
   .install{text-decoration:none;display:block;text-align:center;
     background:var(--ok);color:#06220f;font-weight:700;padding:14px;
     border-radius:10px;margin-top:8px}
+  .usb{width:100%;background:#8b5cf6;color:#fff;border:0;border-radius:10px;
+    padding:14px;font-size:15px;font-weight:700;cursor:pointer;margin-bottom:12px}
+  .usb:hover{background:#7c3aed}
+  .usb:disabled{opacity:.5;cursor:not-allowed}
+  .divider{display:flex;align-items:center;gap:10px;color:var(--mut);
+    font-size:12px;margin:14px 0}
+  .divider::before,.divider::after{content:"";flex:1;height:1px;background:var(--line)}
   .meta{font-size:13px;color:var(--mut);margin-top:10px}
   .meta b{color:var(--fg)}
   pre{background:#0a0d12;border:1px solid var(--line);border-radius:9px;
@@ -67,6 +74,9 @@
   {% if not cf_ok %}
     <div class="dep bad">⚠ cloudflared not found — you'll still get a signed IPA, but the tap-to-install link needs it.</div>
   {% endif %}
+  {% if usb_ok %}
+    <div class="dep" style="background:rgba(139,92,246,.12);color:#c4b5fd;border:1px solid rgba(139,92,246,.3)">🔌 USB install available — connect your iPhone and you'll get an "Install via USB" button after signing.</div>
+  {% endif %}
 
   <div class="card">
     <form id="f">
@@ -90,8 +100,17 @@
   <div id="status" class="status"></div>
 
   <div id="result" class="card" style="display:none">
-    <a id="install" class="install" href="#">📲 Tap on iPhone to Install</a>
-    <canvas id="qr"></canvas>
+    <!-- USB install (shown when toolchain + device available) -->
+    <button type="button" id="usbBtn" class="usb" style="display:none">
+      🔌 Install via USB cable
+    </button>
+    <div id="usbMsg" class="hint" style="display:none"></div>
+
+    <div id="otaBlock">
+      <a id="install" class="install" href="#">📲 Tap on iPhone to Install</a>
+      <canvas id="qr"></canvas>
+    </div>
+
     <div class="meta" id="meta"></div>
     <pre id="log" style="display:none"></pre>
   </div>
@@ -133,6 +152,24 @@ f.addEventListener('submit', async (e)=>{
     document.getElementById('meta').innerHTML =
       `<b>${j.title||'App'}</b> · ${j.bundle_id||'?'} · v${j.version||'?'}`;
 
+    // ---- USB install button ----
+    window._signedName = j.signed_name;
+    const usbBtn = document.getElementById('usbBtn');
+    const usbMsg = document.getElementById('usbMsg');
+    usbMsg.style.display='none';
+    if(j.usb_available && j.usb_devices && j.usb_devices.length){
+      usbBtn.style.display='block';
+      usbBtn.disabled=false;
+      usbBtn.textContent = `🔌 Install via USB (${j.usb_devices.length} device)`;
+      window._udid = j.usb_devices[0];
+    }else if(j.usb_available){
+      usbBtn.style.display='block';
+      usbBtn.disabled=true;
+      usbBtn.textContent = '🔌 USB ready — no iPhone detected';
+    }else{
+      usbBtn.style.display='none';
+    }
+
     const install = document.getElementById('install');
     if(j.install_url){
       install.href = j.install_url;
@@ -153,6 +190,41 @@ f.addEventListener('submit', async (e)=>{
     setStatus('err', '❌ ' + err.message);
   }
   go.disabled = false;
+});
+
+document.getElementById('usbBtn').addEventListener('click', async ()=>{
+  const btn = document.getElementById('usbBtn');
+  const msg = document.getElementById('usbMsg');
+  btn.disabled = true;
+  const orig = btn.textContent;
+  btn.textContent = '⏳ Installing over USB…';
+  msg.style.display='none';
+  try{
+    const fd = new FormData();
+    fd.append('name', window._signedName || '');
+    if(window._udid) fd.append('udid', window._udid);
+    const r = await fetch('/install_usb', {method:'POST', body:fd});
+    const j = await r.json();
+    if(j.ok){
+      btn.textContent = '✅ Installed on iPhone';
+      msg.style.display='block';
+      msg.style.color = 'var(--ok)';
+      msg.textContent = 'Done. First launch: Settings → General → VPN & Device Management → Trust.';
+    }else{
+      btn.disabled = false;
+      btn.textContent = orig;
+      msg.style.display='block';
+      msg.style.color = 'var(--err)';
+      msg.textContent = j.error || 'USB install failed.';
+    }
+    if(j.log) showLog(j.log);
+  }catch(err){
+    btn.disabled = false;
+    btn.textContent = orig;
+    msg.style.display='block';
+    msg.style.color = 'var(--err)';
+    msg.textContent = err.message;
+  }
 });
 
 function showLog(txt){
