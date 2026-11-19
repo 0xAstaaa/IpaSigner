@@ -1,0 +1,24 @@
+# external binaries (downloaded separately, see README)
+bin/zsign*
+bin/cloudflared*
+bin/ideviceinstaller*
+bin/*.dll
+bin/*.exe
+
+# runtime artifacts
+uploads/
+signed/
+*.log
+server.log
+tunnel.log
+
+# python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# os / editor
+.DS_Store
+Thumbs.db
+.vscode/
