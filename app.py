@@ -13,6 +13,7 @@ import sys
 import uuid
 import socket
 import shutil
+import logging
 import plistlib
 import subprocess
 import threading
@@ -22,6 +23,20 @@ from flask import (
     Flask, request, render_template, jsonify,
     send_from_directory, url_for
 )
+
+# ---------------------------------------------------------------- logging
+# Everything goes to ipa-signer/app.log (and the console). Watch it with:
+#   PowerShell:  Get-Content app.log -Wait -Tail 20
+LOG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "app.log")
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(message)s",
+    handlers=[
+        logging.FileHandler(LOG_PATH, encoding="utf-8"),
+        logging.StreamHandler(sys.stdout),
+    ],
+)
+log = logging.getLogger("ipa-signer")
 
 # ---------------------------------------------------------------- paths
 BASE_DIR   = os.path.dirname(os.path.abspath(__file__))
@@ -254,10 +269,13 @@ def install_usb():
     ipa_path = os.path.join(SIGNED_DIR, safe)
     if not safe or not os.path.exists(ipa_path):
         return jsonify(ok=False, error="Signed IPA not found."), 404
-    ok, log = usb_install(ipa_path, udid)
+    log.info("USB install start: %s -> %s", safe, udid or "(first device)")
+    t0 = time.time()
+    ok, ilog = usb_install(ipa_path, udid)
+    log.info("USB install finished: ok=%s in %.1fs", ok, time.time() - t0)
     if not ok:
-        return jsonify(ok=False, error="USB install failed.", log=log), 500
-    return jsonify(ok=True, log=log)
+        return jsonify(ok=False, error="USB install failed.", log=ilog), 500
+    return jsonify(ok=True, log=ilog)
 
 
 @app.route("/sign", methods=["POST"])
@@ -284,10 +302,17 @@ def sign():
     ipa_path  = os.path.join(job_dir, "input.ipa")
     p12_path  = os.path.join(job_dir, "cert.p12")
     prov_path = os.path.join(job_dir, "profile.mobileprovision")
+
+    t0 = time.time()
     if local_ipa:
         ipa_path = local_ipa          # sign in place; don't copy 500MB around
+        size_mb = os.path.getsize(ipa_path) / 1e6
+        log.info("[%s] sign start: LOCAL path %s (%.0f MB) - no upload", job, ipa_path, size_mb)
     else:
         ipa.save(ipa_path)
+        size_mb = os.path.getsize(ipa_path) / 1e6
+        log.info("[%s] sign start: uploaded IPA received (%.0f MB) in %.1fs",
+                 job, size_mb, time.time() - t0)
     p12.save(p12_path)
     prov.save(prov_path)
 
@@ -295,7 +320,10 @@ def sign():
 
     out_name = f"{job}.ipa"
     out_path = os.path.join(SIGNED_DIR, out_name)
-    ok, log = run_zsign(ipa_path, p12_path, prov_path, pwd, out_path)
+    log.info("[%s] zsign running...", job)
+    t1 = time.time()
+    ok, zlog = run_zsign(ipa_path, p12_path, prov_path, pwd, out_path)
+    log.info("[%s] zsign finished: ok=%s in %.1fs", job, ok, time.time() - t1)
 
     # cleanup sensitive inputs
     try:
@@ -304,7 +332,8 @@ def sign():
         pass
 
     if not ok:
-        return jsonify(ok=False, error="Signing failed.", log=log), 500
+        log.error("[%s] signing FAILED", job)
+        return jsonify(ok=False, error="Signing failed.", log=zlog), 500
 
     # read fresh metadata from the SIGNED ipa (bundle id may be rewritten)
     signed_meta = read_ipa_metadata(out_path)
@@ -341,7 +370,7 @@ def sign():
         signed_name=out_name,          # for USB install
         usb_available=usb_available(),
         usb_devices=list_usb_devices(),
-        log=log,
+        log=zlog,
     )
 
 
