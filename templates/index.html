@@ -81,7 +81,9 @@
   <div class="card">
     <form id="f">
       <label>iOS App (.ipa)</label>
-      <input type="file" name="ipa" accept=".ipa" required>
+      <input type="file" name="ipa" id="ipaFile" accept=".ipa">
+      <div class="hint">For big apps already on this PC, paste the full path below instead (no upload).</div>
+      <input type="text" name="ipa_path" id="ipaPath" placeholder="or C:\path\to\app.ipa on this PC" style="margin-top:6px">
 
       <label>Certificate (.p12)</label>
       <input type="file" name="p12" accept=".p12" required>
@@ -138,9 +140,23 @@ function setStatus(kind, html){
 
 f.addEventListener('submit', async (e)=>{
   e.preventDefault();
+  const hasFile = document.getElementById('ipaFile').files.length > 0;
+  const hasPath = document.getElementById('ipaPath').value.trim().length > 0;
+  if(!hasFile && !hasPath){
+    setStatus('err', '❌ Choose an IPA file, or paste its path on this PC.');
+    return;
+  }
+  const p12ok = document.querySelector('[name=p12]').files.length>0;
+  const provok = document.querySelector('[name=prov]').files.length>0;
+  if(!p12ok || !provok){
+    setStatus('err', '❌ Please select the .p12 and .mobileprovision files.');
+    return;
+  }
   result.style.display='none';
   go.disabled = true;
-  setStatus('info', '<span class="spin"></span>Uploading & signing… this can take a minute for big apps.');
+  setStatus('info', '<span class="spin"></span>' +
+    (hasPath ? 'Signing from local file… no upload needed.'
+             : 'Uploading & signing… big apps take a while.'));
 
   const data = new FormData(f);
   // USB-only sign skips the tunnel unless the OTA box is checked

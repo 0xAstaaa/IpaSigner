@@ -266,9 +266,16 @@ def sign():
     p12  = request.files.get("p12")
     prov = request.files.get("prov")
     pwd  = request.form.get("password", "")
+    # Optional: a path to an IPA already on THIS PC (skips the upload entirely,
+    # ideal for large apps). The cert/profile are tiny so still come as uploads.
+    local_ipa = (request.form.get("ipa_path") or "").strip().strip('"')
 
-    if not (ipa and p12 and prov):
-        return jsonify(ok=False, error="Please provide IPA, .p12 and .mobileprovision files."), 400
+    if not (p12 and prov):
+        return jsonify(ok=False, error="Please provide the .p12 and .mobileprovision files."), 400
+    if not ipa and not local_ipa:
+        return jsonify(ok=False, error="Provide an IPA file, or a local IPA path."), 400
+    if local_ipa and not os.path.isfile(local_ipa):
+        return jsonify(ok=False, error=f"Local IPA not found: {local_ipa}"), 400
 
     job = uuid.uuid4().hex[:8]
     job_dir = os.path.join(UPLOAD_DIR, job)
@@ -277,7 +284,10 @@ def sign():
     ipa_path  = os.path.join(job_dir, "input.ipa")
     p12_path  = os.path.join(job_dir, "cert.p12")
     prov_path = os.path.join(job_dir, "profile.mobileprovision")
-    ipa.save(ipa_path)
+    if local_ipa:
+        ipa_path = local_ipa          # sign in place; don't copy 500MB around
+    else:
+        ipa.save(ipa_path)
     p12.save(p12_path)
     prov.save(prov_path)
 
