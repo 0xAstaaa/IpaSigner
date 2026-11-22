@@ -95,6 +95,17 @@
       <input type="password" name="password" placeholder="password for the .p12">
       <div class="hint">Leave blank if your .p12 has no password.</div>
 
+      <label style="display:flex;align-items:center;gap:8px;margin-top:16px;cursor:pointer">
+        <input type="checkbox" id="dup" name="duplicate" value="1" style="width:auto;margin:0">
+        <span>Duplicate — install alongside the existing app</span>
+      </label>
+      <div class="hint">Gives the app a new bundle ID + name so iOS installs it as a
+        separate copy instead of rejecting it as a mismatched upgrade.</div>
+      <div id="dupFields" style="display:none;margin-top:8px">
+        <input type="text" name="app_name" placeholder="New display name (optional, e.g. 'Instagram 2')">
+        <input type="text" name="bundle_id" placeholder="New bundle ID (optional, auto if blank)" style="margin-top:6px">
+      </div>
+
       {% if usb_ok %}
       <label style="display:flex;align-items:center;gap:8px;margin-top:16px;cursor:pointer">
         <input type="checkbox" id="wantOta" style="width:auto;margin:0">
@@ -137,6 +148,11 @@ function setStatus(kind, html){
   statusEl.className = 'status show ' + kind;
   statusEl.innerHTML = html;
 }
+
+// show the custom id/name fields when 'Duplicate' is ticked
+document.getElementById('dup').addEventListener('change', (e)=>{
+  document.getElementById('dupFields').style.display = e.target.checked ? 'block' : 'none';
+});
 
 f.addEventListener('submit', async (e)=>{
   e.preventDefault();

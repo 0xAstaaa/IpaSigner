@@ -164,8 +164,15 @@ def start_tunnel(port):
 
 
 # ---------------------------------------------------------------- signing
-def run_zsign(ipa_path, p12_path, prov_path, password, out_path):
-    """Call zsign. Returns (success: bool, log: str)."""
+def run_zsign(ipa_path, p12_path, prov_path, password, out_path,
+              bundle_id=None, app_name=None):
+    """Call zsign. Returns (success: bool, log: str).
+
+    bundle_id / app_name, when given, rewrite the app's CFBundleIdentifier and
+    display name. Changing the bundle id makes iOS install this as a SEPARATE
+    app alongside any existing one (the 'duplicate' feature), instead of
+    rejecting it with MismatchedApplicationIdentifierEntitlement.
+    """
     if not (os.path.exists(ZSIGN) or shutil.which("zsign")):
         return False, (
             "zsign not found. Download zsign.exe and put it in the 'bin' "
@@ -179,8 +186,12 @@ def run_zsign(ipa_path, p12_path, prov_path, password, out_path):
         "-m", prov_path,         # .mobileprovision
         "-o", out_path,          # output ipa
         "-z", "1",               # fast compression (9 = tiny but very slow)
-        ipa_path,                # input ipa
     ]
+    if bundle_id:
+        cmd += ["-b", bundle_id]     # rewrite CFBundleIdentifier (duplicate)
+    if app_name:
+        cmd += ["-n", app_name]      # rewrite display name
+    cmd.append(ipa_path)             # input ipa (must be last)
     try:
         proc = subprocess.run(
             cmd, capture_output=True, text=True, timeout=1800
@@ -287,6 +298,10 @@ def sign():
     # Optional: a path to an IPA already on THIS PC (skips the upload entirely,
     # ideal for large apps). The cert/profile are tiny so still come as uploads.
     local_ipa = (request.form.get("ipa_path") or "").strip().strip('"')
+    # Duplicate: install alongside an existing copy by giving it a new bundle id.
+    make_dup   = request.form.get("duplicate", "0") == "1"
+    custom_bid = (request.form.get("bundle_id") or "").strip()
+    custom_name = (request.form.get("app_name") or "").strip()
 
     if not (p12 and prov):
         return jsonify(ok=False, error="Please provide the .p12 and .mobileprovision files."), 400
@@ -318,11 +333,29 @@ def sign():
 
     meta = read_ipa_metadata(ipa_path)
 
+    # Work out the bundle id / name to sign with.
+    dup_bid = None
+    dup_name = None
+    if custom_bid:
+        dup_bid = custom_bid                       # user gave an explicit id
+    elif make_dup:
+        # auto-generate a unique id so it installs alongside the original
+        base = meta.get("bundle_id") or "com.example.app"
+        dup_bid = f"{base}.dup{job[:4]}"
+    if custom_name:
+        dup_name = custom_name
+    elif make_dup:
+        orig = meta.get("name") or "App"
+        dup_name = f"{orig} 2"
+    if dup_bid:
+        log.info("[%s] duplicate mode: bundle_id=%s name=%s", job, dup_bid, dup_name)
+
     out_name = f"{job}.ipa"
     out_path = os.path.join(SIGNED_DIR, out_name)
     log.info("[%s] zsign running...", job)
     t1 = time.time()
-    ok, zlog = run_zsign(ipa_path, p12_path, prov_path, pwd, out_path)
+    ok, zlog = run_zsign(ipa_path, p12_path, prov_path, pwd, out_path,
+                         bundle_id=dup_bid, app_name=dup_name)
     log.info("[%s] zsign finished: ok=%s in %.1fs", job, ok, time.time() - t1)
 
     # cleanup sensitive inputs
